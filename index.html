@@ -31,37 +31,13 @@
     import { createRoot } from 'react-dom/client';
     import { 
       Calendar, Clock, CheckCircle2, AlertCircle, Mail, Plus, Search, 
-      X, Send, Building2, Package, UserCircle, Copy, Filter, Layers, Trash2 
+      X, Send, Building2, Package, UserCircle, Copy, Filter, Layers, Trash2, BellRing, Loader2
     } from 'lucide-react';
     
-    // Importações do Firebase via CDN compatível com o navegador
-    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-    import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-    import { getFirestore, collection, onSnapshot, addDoc, updateDoc, deleteDoc, doc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
-
-    // --- CONFIGURAÇÃO FIREBASE ---
-    const isCanvasEnv = typeof __firebase_config !== 'undefined';
-    const firebaseConfig = isCanvasEnv ? JSON.parse(__firebase_config) : {
-      apiKey: "AIzaSyD7gc527o5PuIzl3rZZikTvJkXj91oMl2U",
-      authDomain: "painelantecipacoes.firebaseapp.com",
-      projectId: "painelantecipacoes",
-      storageBucket: "painelantecipacoes.firebasestorage.app",
-      messagingSenderId: "369488367169",
-      appId: "1:369488367169:web:180622a7476af9865040c0",
-      measurementId: "G-L173ZDSZ69"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
-    const canvasAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-
-    const getCollectionRef = () => {
-      if (isCanvasEnv) {
-        return collection(db, 'artifacts', canvasAppId, 'public', 'data', 'pedidos');
-      }
-      return collection(db, 'pedidos');
-    };
+    // =========================================================================
+    // COLE AQUI A URL DO GOOGLE APPS SCRIPT GERADA (APP DA WEB)
+    // =========================================================================
+    const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyQ7N3abnyhUZginfgjoA3_H1Ur5PGwSswNeXyt9R_X1zaudevD-5mmvrjny2ryAg/exec"; 
 
     // --- CONSTANTES ---
     const SEGMENTOS = [
@@ -77,6 +53,11 @@
       'SORVETES'
     ];
 
+    const EMAILS_COPIA_FIXA = [
+      'thamiris.bezerra@doremus.com.br',
+      'paula.novais@doremus.com.br'
+    ];
+
     const getToday = () => {
       const d = new Date();
       d.setHours(0,0,0,0);
@@ -85,7 +66,7 @@
 
     function App() {
       const [orders, setOrders] = useState([]);
-      const [user, setUser] = useState(null);
+      const [isLoading, setIsLoading] = useState(true); // Controle de Loading da Planilha
       const [searchTerm, setSearchTerm] = useState('');
       const [activeTab, setActiveTab] = useState('Todos');
       const [selectedSegment, setSelectedSegment] = useState('Todos');
@@ -93,52 +74,65 @@
       const [emailModalData, setEmailModalData] = useState(null);
       const [orderToDelete, setOrderToDelete] = useState(null);
       const [isCopied, setIsCopied] = useState(false);
+      
+      const [showDailyDigest, setShowDailyDigest] = useState(false);
+      const [hasSeenDigestThisSession, setHasSeenDigestThisSession] = useState(false);
 
-      // Inicialização do Firebase e Autenticação
-      useEffect(() => {
-        const initAuth = async () => {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            await signInAnonymously(auth);
+      // --- COMUNICAÇÃO COM O GOOGLE SHEETS ---
+      const fetchOrders = async () => {
+        setIsLoading(true);
+        try {
+          if(SCRIPT_URL === "SUA_URL_AQUI") {
+            console.warn("Aviso: SCRIPT_URL não foi configurado.");
+            setIsLoading(false);
+            return;
           }
-        };
-        initAuth();
-        const unsubscribe = onAuthStateChanged(auth, setUser);
-        return () => unsubscribe();
+          const response = await fetch(`${SCRIPT_URL}?action=getOrders`);
+          const data = await response.json();
+          
+          // Ordena garantindo os mais recentes primeiro
+          data.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          setOrders(data);
+
+          // Disparo de Alerta Diário
+          const pendingFeedbacks = data.filter(o => isEmailDue(o));
+          if (pendingFeedbacks.length > 0 && !hasSeenDigestThisSession) {
+            setShowDailyDigest(true);
+            setHasSeenDigestThisSession(true);
+          }
+        } catch (error) {
+          console.error("Erro ao ler da planilha:", error);
+          alert("Não foi possível carregar os dados. Verifique a conexão com a Planilha.");
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      useEffect(() => {
+        fetchOrders();
       }, []);
 
-      // Sincronização de Dados em Tempo Real
-      useEffect(() => {
-        if (!user) return;
-        const unsubscribe = onSnapshot(getCollectionRef(), (snapshot) => {
-          const loadedOrders = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          loadedOrders.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-          setOrders(loadedOrders);
-        }, (error) => {
-          console.error("Erro no Firebase:", error);
-        });
-        return () => unsubscribe();
-      }, [user]);
-
-      // Form State
-      const [formData, setFormData] = useState({
-        pedido: '', razaoSocial: '', segmento: '', dataNecessidade: '', dataTeste: '',
-        vendedor: '', emailVendedor: '', gerente: '', emailGerente: '', 
-        diretor: '', emailDiretor: '', atendente: '', emailAtendente: '',
-        produto: '', descricao: '', quantidade: ''
-      });
-
-      const allSegments = ['Todos', ...SEGMENTOS];
-
+      // Cálculo de Atraso de Email
       const getDaysDifference = (targetDateStr) => {
         const targetDate = new Date(`${targetDateStr}T00:00:00`);
         const diffTime = targetDate - getToday();
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       };
+
+      const isEmailDue = (order) => {
+        if (order.status === 'Finalizado') return false;
+        const daysSinceTest = getDaysDifference(order.dataTeste) * -1;
+        return daysSinceTest >= 1 && order.status === 'Enviado';
+      };
+
+      const [formData, setFormData] = useState({
+        pedido: '', razaoSocial: '', segmento: '', dataNecessidade: '', dataTeste: '',
+        vendedor: '', emailVendedor: '', gerente: '', emailGerente: '', 
+        diretor: '', emailDiretor: '', atendente: '', emailAtendente: '',
+        codigoProduto: '', produto: '', descricao: '', quantidade: ''
+      });
+
+      const allSegments = ['Todos', ...SEGMENTOS];
 
       const getRowIndicatorColor = (order) => {
         if (order.status === 'Enviado' || order.status === 'Finalizado') return 'border-l-green-500';
@@ -159,53 +153,73 @@
         return <span className="px-2.5 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded flex items-center gap-1 w-max"><Calendar size={14}/> No Prazo</span>;
       };
 
-      const isEmailDue = (order) => {
-        if (order.status === 'Finalizado') return false;
-        const daysSinceTest = getDaysDifference(order.dataTeste) * -1;
-        return daysSinceTest >= 1 && order.status === 'Enviado';
-      };
-
+      // Ações via POST para a Planilha
       const handleAddOrder = async (e) => {
         e.preventDefault();
-        if (!user) return;
+        setIsLoading(true);
+        setIsAddModalOpen(false);
+
         const newOrder = {
-          ...formData, status: 'Pendente', quantidade: Number(formData.quantidade), createdAt: new Date().toISOString()
+          ...formData, 
+          id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(), // ID Único
+          status: 'Pendente', 
+          createdAt: new Date().toISOString()
         };
+
         try {
-          await addDoc(getCollectionRef(), newOrder);
-          setIsAddModalOpen(false);
+          await fetch(SCRIPT_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: 'addOrder', data: newOrder })
+          });
+          
           setFormData({ 
             pedido: '', razaoSocial: '', segmento: '', dataNecessidade: '', dataTeste: '', 
             vendedor: '', emailVendedor: '', gerente: '', emailGerente: '', 
             diretor: '', emailDiretor: '', atendente: '', emailAtendente: '', 
-            produto: '', descricao: '', quantidade: '' 
+            codigoProduto: '', produto: '', descricao: '', quantidade: '' 
           });
+          
+          fetchOrders(); // Recarrega
         } catch (error) {
-          console.error("Erro ao adicionar pedido:", error);
+          console.error("Erro", error);
+          setIsLoading(false);
         }
       };
 
       const markAsSent = async (id) => {
-        if (!user) return;
-        await updateDoc(doc(getCollectionRef(), id), { status: 'Enviado' });
+        setIsLoading(true);
+        await fetch(SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'updateStatus', id, status: 'Enviado' })
+        });
+        fetchOrders();
       };
 
       const markAsFinished = async (id) => {
-        if (!user) return;
-        await updateDoc(doc(getCollectionRef(), id), { status: 'Finalizado' });
+        setIsLoading(true);
         setEmailModalData(null);
+        await fetch(SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'updateStatus', id, status: 'Finalizado' })
+        });
+        fetchOrders();
       };
 
       const handleDeleteOrder = async (id) => {
-        if (!user) return;
-        await deleteDoc(doc(getCollectionRef(), id));
+        setIsLoading(true);
         setOrderToDelete(null);
+        await fetch(SCRIPT_URL, {
+          method: 'POST',
+          body: JSON.stringify({ action: 'deleteOrder', id })
+        });
+        fetchOrders();
       };
 
       const filteredOrders = orders.filter(o => {
-        const matchesSearch = o.razaoSocial.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                              o.pedido.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                              o.vendedor.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = o.razaoSocial?.toLowerCase().includes(searchTerm.toLowerCase()) || 
+                              o.pedido?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              o.vendedor?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                              (o.codigoProduto && o.codigoProduto.toLowerCase().includes(searchTerm.toLowerCase()));
         
         let matchesTab = true;
         if (activeTab === 'Pendentes') matchesTab = o.status === 'Pendente';
@@ -221,10 +235,22 @@
       const countPendentes = ordersInSegment.filter(o => o.status === 'Pendente').length;
       const countUrgentes = ordersInSegment.filter(o => o.status === 'Pendente' && getDaysDifference(o.dataNecessidade) <= 3).length;
       const countEnviados = ordersInSegment.filter(o => o.status === 'Enviado' && !isEmailDue(o)).length;
-      const countFeedbacks = ordersInSegment.filter(o => isEmailDue(o)).length;
+      
+      const feedbacksPendentesData = ordersInSegment.filter(o => isEmailDue(o));
+      const countFeedbacks = feedbacksPendentesData.length;
 
       return (
-        <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-12">
+        <div className="min-h-screen bg-slate-100 font-sans text-slate-800 pb-12 relative">
+          
+          {/* OVERLAY DE LOADING */}
+          {isLoading && (
+            <div className="fixed inset-0 bg-white/70 backdrop-blur-sm z-[100] flex flex-col items-center justify-center">
+              <Loader2 size={48} className="text-blue-600 animate-spin mb-4" />
+              <p className="text-lg font-bold text-slate-700">Sincronizando com a Planilha...</p>
+              <p className="text-sm text-slate-500">Aguarde alguns segundos.</p>
+            </div>
+          )}
+
           {/* HEADER */}
           <header className="bg-white border-b border-slate-200 shadow-sm sticky top-0 z-10">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
@@ -233,7 +259,7 @@
                 <div className="h-8 w-px bg-slate-200 mx-2"></div>
                 <div>
                   <h1 className="text-xl font-bold text-slate-800 tracking-tight">Painel de Antecipações</h1>
-                  <p className="text-xs text-slate-500 font-medium">Gestão de Amostras e Feedbacks</p>
+                  <p className="text-xs text-slate-500 font-medium">Sincronizado com Google Sheets</p>
                 </div>
               </div>
               <div className="flex gap-4">
@@ -254,12 +280,19 @@
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                   <input 
                     type="text" 
-                    placeholder="Buscar pedido, cliente..." 
+                    placeholder="Buscar pedido, cliente, código..." 
                     className="pl-10 pr-4 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-64 transition-all"
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
                   />
                 </div>
+                <button 
+                  onClick={() => fetchOrders()}
+                  className="bg-slate-200 hover:bg-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold flex items-center shadow-sm transition-colors"
+                  title="Forçar Atualização"
+                >
+                  Atualizar Dados
+                </button>
                 <button 
                   onClick={() => setIsAddModalOpen(true)}
                   className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 shadow-sm transition-colors"
@@ -272,6 +305,13 @@
 
           {/* MAIN CONTENT */}
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            {SCRIPT_URL === "SUA_URL_AQUI" && !isLoading && (
+              <div className="mb-6 p-4 bg-red-100 border border-red-300 text-red-800 rounded-xl flex items-center gap-3">
+                <AlertCircle />
+                <p><strong>Atenção:</strong> Você precisa colocar a URL gerada pelo Google Apps Script no código (linha ~45 onde diz <code>SCRIPT_URL</code>).</p>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
               <div onClick={() => setActiveTab('Pendentes')} className={`bg-white p-5 rounded-xl border shadow-sm flex items-center gap-4 cursor-pointer transition-all hover:shadow-md ${activeTab === 'Pendentes' ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200'}`}>
                 <div className="bg-blue-50 p-3 rounded-lg text-blue-600"><Package size={24} /></div>
@@ -326,7 +366,7 @@
                 ))}
               </div>
 
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto min-h-[300px]">
                 <table className="w-full text-left text-sm whitespace-nowrap">
                   <thead className="bg-white border-b border-slate-200 text-slate-500 uppercase text-[11px] tracking-wider">
                     <tr>
@@ -360,20 +400,21 @@
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center gap-2 text-xs">
                               <span className="text-slate-400 w-16">Envio:</span>
-                              <span className="font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{order.dataNecessidade.split('-').reverse().join('/')}</span>
+                              <span className="font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{order.dataNecessidade ? order.dataNecessidade.split('-').reverse().join('/') : ''}</span>
                             </div>
                             <div className="flex items-center gap-2 text-xs">
                               <span className="text-slate-400 w-16">Teste:</span>
-                              <span className="font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{order.dataTeste.split('-').reverse().join('/')}</span>
+                              <span className="font-medium text-slate-700 bg-slate-100 px-2 py-0.5 rounded">{order.dataTeste ? order.dataTeste.split('-').reverse().join('/') : ''}</span>
                             </div>
                           </div>
                         </td>
                         <td className="px-6 py-4">
                           <div className="font-medium text-slate-800 flex items-center gap-2">
-                            <Package size={14} className="text-blue-500"/> {order.produto}
+                            <Package size={14} className="text-blue-500"/> 
+                            {order.codigoProduto ? `${order.codigoProduto} - ${order.produto}` : order.produto}
                           </div>
                           <div className="text-slate-500 text-xs mt-1 max-w-[250px] truncate" title={order.descricao}>
-                            <span className="font-bold text-slate-600">{order.quantidade} un</span> - {order.descricao}
+                            <span className="font-bold text-slate-600">{order.quantidade}</span> - {order.descricao}
                           </div>
                         </td>
                         <td className="px-6 py-4">
@@ -382,12 +423,12 @@
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
                             {order.status === 'Pendente' && (
-                              <button onClick={() => markAsSent(order.id)} className="bg-white border border-slate-300 hover:border-green-500 hover:text-green-600 hover:bg-green-50 text-slate-700 px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1 transition-all shadow-sm">
+                              <button onClick={() => markAsSent(order.id)} disabled={isLoading} className="bg-white border border-slate-300 hover:border-green-500 hover:text-green-600 hover:bg-green-50 text-slate-700 px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1 transition-all shadow-sm">
                                 <Send size={14} /> Enviar Amostra
                               </button>
                             )}
                             {isEmailDue(order) && (
-                              <button onClick={() => setEmailModalData(order)} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-1 shadow-md transition-all animate-pulse hover:animate-none ring-2 ring-purple-600 ring-offset-2 ring-offset-white">
+                              <button onClick={() => setEmailModalData(order)} disabled={isLoading} className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-1.5 rounded-md text-xs font-bold flex items-center gap-1 shadow-md transition-all animate-pulse hover:animate-none ring-2 ring-purple-600 ring-offset-2 ring-offset-white">
                                 <Mail size={14} /> Cobrar Feedback
                               </button>
                             )}
@@ -397,14 +438,14 @@
                               </span>
                             )}
                             <div className="w-px h-6 bg-slate-200 mx-1"></div>
-                            <button onClick={() => setOrderToDelete(order)} className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-md transition-colors" title="Excluir pedido">
+                            <button onClick={() => setOrderToDelete(order)} disabled={isLoading} className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-md transition-colors" title="Excluir pedido">
                               <Trash2 size={16} />
                             </button>
                           </div>
                         </td>
                       </tr>
                     ))}
-                    {filteredOrders.length === 0 && (
+                    {filteredOrders.length === 0 && !isLoading && (
                       <tr>
                         <td colSpan="5" className="px-6 py-12 text-center">
                           <div className="flex flex-col items-center justify-center text-slate-400">
@@ -420,20 +461,78 @@
             </div>
           </main>
 
+          {/* NOVO: MODAL DE ALERTA DIÁRIO */}
+          {showDailyDigest && (
+            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+              <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col animate-in fade-in zoom-in duration-300">
+                <div className="bg-purple-600 p-6 text-center relative">
+                  <div className="w-16 h-16 bg-white/20 text-white rounded-full flex items-center justify-center mx-auto mb-3">
+                    <BellRing size={32} className="animate-pulse" />
+                  </div>
+                  <h2 className="text-2xl font-bold text-white mb-1">Resumo do Dia</h2>
+                  <p className="text-purple-100 text-sm">Você tem pendências que exigem sua atenção hoje.</p>
+                  <button onClick={() => setShowDailyDigest(false)} className="absolute top-4 right-4 text-white/70 hover:text-white transition-colors">
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                <div className="p-6 bg-slate-50 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-800 uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <Mail size={16} className="text-purple-600"/>
+                    Feedbacks para Cobrar ({countFeedbacks})
+                  </h3>
+                  
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                    {feedbacksPendentesData.map(order => (
+                      <div key={`digest-${order.id}`} className="bg-white border border-slate-200 rounded-lg p-3 flex items-center justify-between shadow-sm">
+                        <div>
+                          <p className="font-bold text-slate-800 text-sm">{order.pedido} - <span className="font-medium">{order.razaoSocial}</span></p>
+                          <p className="text-xs text-slate-500 mt-0.5">Teste feito em: {order.dataTeste ? order.dataTeste.split('-').reverse().join('/') : ''}</p>
+                        </div>
+                        <button 
+                          onClick={() => {
+                            setShowDailyDigest(false);
+                            setActiveTab('Feedbacks');
+                            setEmailModalData(order);
+                          }}
+                          className="bg-purple-100 hover:bg-purple-200 text-purple-700 px-3 py-1.5 rounded text-xs font-bold transition-colors"
+                        >
+                          Gerar E-mail
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-5 flex justify-center bg-white">
+                  <button 
+                    onClick={() => {
+                      setShowDailyDigest(false);
+                      setActiveTab('Feedbacks');
+                    }} 
+                    className="px-6 py-2.5 rounded-lg text-sm font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 transition-colors w-full"
+                  >
+                    Fechar e Ver Painel Completo
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {isAddModalOpen && (
             <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
+              <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
                 <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50">
                   <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Plus size={20} className="text-blue-600" /> Nova Antecipação</h2>
-                  <button onClick={() => setIsAddModalOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-200"><X size={20} /></button>
+                  <button onClick={() => setIsAddModalOpen(false)} disabled={isLoading} className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-200"><X size={20} /></button>
                 </div>
                 <div className="p-6 overflow-y-auto custom-scrollbar">
                   <form id="add-order-form" onSubmit={handleAddOrder} className="space-y-6">
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-slate-400 uppercase border-b border-slate-100 pb-2">Informações do Pedido</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                         <div><label className="block text-sm font-medium text-slate-700 mb-1">Número do Pedido</label><input required type="text" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.pedido} onChange={e => setFormData({...formData, pedido: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Razão Social</label><input required type="text" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.razaoSocial} onChange={e => setFormData({...formData, razaoSocial: e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="block text-sm font-medium text-slate-700 mb-1">Razão Social</label><input required type="text" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.razaoSocial} onChange={e => setFormData({...formData, razaoSocial: e.target.value})} /></div>
                         <div>
                           <label className="block text-sm font-medium text-slate-700 mb-1">Segmento</label>
                           <select required className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white" value={formData.segmento} onChange={e => setFormData({...formData, segmento: e.target.value})}>
@@ -441,10 +540,21 @@
                             {SEGMENTOS.map(seg => <option key={seg} value={seg}>{seg}</option>)}
                           </select>
                         </div>
-                        <div className="md:col-span-1"><label className="block text-sm font-medium text-slate-700 mb-1">Data da Necessidade</label><input required type="date" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.dataNecessidade} onChange={e => setFormData({...formData, dataNecessidade: e.target.value})} /></div>
-                        <div className="md:col-span-1"><label className="block text-sm font-medium text-slate-700 mb-1">Data do Teste</label><input required type="date" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.dataTeste} onChange={e => setFormData({...formData, dataTeste: e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="block text-sm font-medium text-slate-700 mb-1">Data da Necessidade</label><input required type="date" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.dataNecessidade} onChange={e => setFormData({...formData, dataNecessidade: e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="block text-sm font-medium text-slate-700 mb-1">Data do Teste</label><input required type="date" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" value={formData.dataTeste} onChange={e => setFormData({...formData, dataTeste: e.target.value})} /></div>
                       </div>
                     </div>
+                    
+                    <div className="space-y-4">
+                      <h3 className="text-sm font-bold text-slate-400 uppercase border-b border-slate-100 pb-2">Detalhes da Amostra</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Código do Produto</label><input required type="text" placeholder="Ex: PT-1234" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formData.codigoProduto} onChange={e => setFormData({...formData, codigoProduto: e.target.value})} /></div>
+                        <div className="md:col-span-2"><label className="block text-sm font-medium text-slate-700 mb-1">Nome do Produto</label><input required type="text" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formData.produto} onChange={e => setFormData({...formData, produto: e.target.value})} /></div>
+                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Qtd / Unidade</label><input required type="text" placeholder="Ex: 0,040g ou 10kg" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formData.quantidade} onChange={e => setFormData({...formData, quantidade: e.target.value})} /></div>
+                        <div className="md:col-span-4"><label className="block text-sm font-medium text-slate-700 mb-1">Descrição / Finalidade</label><textarea required rows="3" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 resize-none" value={formData.descricao} onChange={e => setFormData({...formData, descricao: e.target.value})}></textarea></div>
+                      </div>
+                    </div>
+
                     <div className="space-y-4">
                       <h3 className="text-sm font-bold text-slate-400 uppercase border-b border-slate-100 pb-2">Equipe Envolvida</h3>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -466,19 +576,11 @@
                         </div>
                       </div>
                     </div>
-                    <div className="space-y-4">
-                      <h3 className="text-sm font-bold text-slate-400 uppercase border-b border-slate-100 pb-2">Detalhes da Amostra</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="md:col-span-2"><label className="block text-sm font-medium text-slate-700 mb-1">Produto</label><input required type="text" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formData.produto} onChange={e => setFormData({...formData, produto: e.target.value})} /></div>
-                        <div><label className="block text-sm font-medium text-slate-700 mb-1">Quantidade</label><input required type="number" min="1" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500" value={formData.quantidade} onChange={e => setFormData({...formData, quantidade: e.target.value})} /></div>
-                        <div className="md:col-span-3"><label className="block text-sm font-medium text-slate-700 mb-1">Descrição / Finalidade</label><textarea required rows="3" className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 resize-none" value={formData.descricao} onChange={e => setFormData({...formData, descricao: e.target.value})}></textarea></div>
-                      </div>
-                    </div>
                   </form>
                 </div>
                 <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-                  <button onClick={() => setIsAddModalOpen(false)} className="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50">Cancelar</button>
-                  <button form="add-order-form" type="submit" className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-2"><CheckCircle2 size={18} /> Salvar Pedido</button>
+                  <button onClick={() => setIsAddModalOpen(false)} disabled={isLoading} className="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-50">Cancelar</button>
+                  <button form="add-order-form" type="submit" disabled={isLoading} className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 flex items-center gap-2"><CheckCircle2 size={18} /> Salvar Pedido</button>
                 </div>
               </div>
             </div>
@@ -489,39 +591,63 @@
               <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[95vh]">
                 <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-800 text-white">
                   <h2 className="text-xl font-bold flex items-center gap-2"><Mail size={20} className="text-purple-400" /> Gerador de E-mail de Feedback</h2>
-                  <button onClick={() => setEmailModalData(null)} className="text-slate-400 hover:text-white p-1 rounded-md"><X size={20} /></button>
+                  <button onClick={() => setEmailModalData(null)} disabled={isLoading} className="text-slate-400 hover:text-white p-1 rounded-md"><X size={20} /></button>
                 </div>
                 <div className="flex-1 overflow-hidden flex flex-col md:flex-row">
                   <div className="w-full md:w-1/3 bg-slate-50 p-6 border-r border-slate-200 overflow-y-auto">
                     <h3 className="font-bold text-slate-800 mb-4 uppercase text-sm tracking-wider">Instruções</h3>
                     <div className="space-y-4 text-sm text-slate-600">
-                      <div><strong className="block text-slate-800">Assunto sugerido:</strong><div className="mt-1 p-2 bg-white border border-slate-200 rounded text-xs select-all">Acompanhamento de Teste - Pedido {emailModalData.pedido} - {emailModalData.razaoSocial}</div></div>
+                      <div><strong className="block text-slate-800">Assunto:</strong><div className="mt-1 p-2 bg-white border border-slate-200 rounded text-xs select-all">Acompanhamento de Teste - Pedido {emailModalData.pedido} - {emailModalData.razaoSocial}</div></div>
                       <div><strong className="block text-slate-800">Para:</strong><div className="mt-1 p-2 bg-white border border-slate-200 rounded text-xs font-medium text-blue-700 select-all">{emailModalData.emailVendedor}</div></div>
-                      <div><strong className="block text-slate-800">Com Cópia (CC):</strong><div className="mt-1 p-2 bg-white border border-slate-200 rounded text-xs font-medium text-blue-700 select-all">{emailModalData.emailGerente};<br/>{emailModalData.emailDiretor};<br/>{emailModalData.emailAtendente}</div></div>
-                      <div className="mt-6 p-4 bg-purple-50 border border-purple-200 rounded-lg text-purple-800"><p className="font-semibold mb-2 flex items-center gap-1"><AlertCircle size={16}/> Próximo Passo:</p><p className="text-xs">Copie o conteúdo ao lado, envie no seu e-mail e depois marque como finalizado abaixo.</p></div>
-                      <button onClick={() => markAsFinished(emailModalData.id)} className="w-full mt-4 bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded-lg text-sm font-semibold flex justify-center items-center gap-2"><CheckCircle2 size={18}/> Marcar como Finalizado</button>
+                      <div>
+                        <strong className="block text-slate-800">Cópia Fixa (Sempre em CC):</strong>
+                        <div className="mt-1 p-2 bg-white border border-slate-200 rounded text-xs font-medium text-purple-700">
+                          {EMAILS_COPIA_FIXA.join(';\n')}
+                        </div>
+                      </div>
+                      <div>
+                        <strong className="block text-slate-800">Outros Envolvidos (CC):</strong>
+                        <div className="mt-1 p-2 bg-white border border-slate-200 rounded text-xs font-medium text-blue-700 select-all">
+                          {emailModalData.emailGerente};<br/>{emailModalData.emailDiretor};<br/>{emailModalData.emailAtendente}
+                        </div>
+                      </div>
+                      <div className="mt-6 p-4 bg-purple-50 border border-purple-200 rounded-lg text-purple-800">
+                        <p className="font-semibold mb-2 flex items-center gap-1"><AlertCircle size={16}/> Envio em 1 Clique</p>
+                        <p className="text-xs">O botão "Copiar E-mail" agora clona o design perfeitamente com a Logo para colar no Outlook/Gmail.</p>
+                      </div>
+                      <button onClick={() => markAsFinished(emailModalData.id)} disabled={isLoading} className="w-full mt-4 bg-slate-800 hover:bg-slate-900 text-white px-4 py-3 rounded-lg text-sm font-semibold flex justify-center items-center gap-2"><CheckCircle2 size={18}/> Marcar como Finalizado</button>
                     </div>
                   </div>
                   <div className="w-full md:w-2/3 p-8 overflow-y-auto bg-white relative">
                     <button onClick={() => {
-                        const emailContent = document.getElementById('email-content').innerText;
-                        navigator.clipboard.writeText(emailContent);
-                        setIsCopied(true);
-                        setTimeout(() => setIsCopied(false), 3000);
+                        const emailDiv = document.getElementById('email-content');
+                        const range = document.createRange();
+                        range.selectNodeContents(emailDiv);
+                        const sel = window.getSelection();
+                        sel.removeAllRanges();
+                        sel.addRange(range);
+                        try {
+                          document.execCommand('copy');
+                          setIsCopied(true);
+                          setTimeout(() => setIsCopied(false), 3000);
+                        } catch (err) {
+                          alert('Erro ao copiar automaticamente. Selecione e aperte Ctrl+C.');
+                        }
+                        sel.removeAllRanges();
                       }}
                       className={`absolute top-4 right-4 px-3 py-1.5 rounded text-xs font-semibold flex items-center gap-1 transition-colors ${isCopied ? 'bg-green-100 text-green-700' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
                     >
-                      {isCopied ? <><CheckCircle2 size={14} /> Copiado!</> : <><Copy size={14} /> Copiar Texto</>}
+                      {isCopied ? <><CheckCircle2 size={14} /> Copiado com Design!</> : <><Copy size={14} /> Copiar E-mail</>}
                     </button>
                     <div id="email-content" className="font-sans text-[15px] text-gray-800 leading-relaxed max-w-2xl">
                       <p>Prezado(a) <strong>{emailModalData.vendedor}</strong>,</p>
                       <p>Esperamos que este e-mail o(a) encontre bem.</p>
                       <p>Entramos em contato referente à antecipação da amostra solicitada sob o <strong>Pedido {emailModalData.pedido}</strong> para o cliente <strong>{emailModalData.razaoSocial}</strong>.</p>
-                      <p>Conforme nossos registros, a amostra do produto <strong>{emailModalData.produto}</strong> ({emailModalData.quantidade} unidades) tinha um teste agendado para a data de <strong>{emailModalData.dataTeste.split('-').reverse().join('/')}</strong>.</p>
+                      <p>Conforme nossos registros, a amostra do produto <strong>{emailModalData.codigoProduto ? `${emailModalData.codigoProduto} - ` : ''}{emailModalData.produto}</strong> (Quantidade: {emailModalData.quantidade}) tinha um teste agendado para a data de <strong>{emailModalData.dataTeste ? emailModalData.dataTeste.split('-').reverse().join('/') : ''}</strong>.</p>
                       <p>Para garantir a eficácia das nossas soluções, solicitamos gentilmente um feedback detalhado sobre este teste. Informações essenciais incluem:</p>
                       <ul className="list-disc pl-6 mb-4 space-y-2">
                         <li>O teste foi realizado conforme o previsto?</li>
-                        <li>Como foi a performance do nosso produto ({emailModalData.produto})?</li>
+                        <li>Como foi a performance do nosso produto durante a aplicação?</li>
                         <li>Houve aprovação técnica por parte do cliente?</li>
                         <li>Quais são os próximos passos ou previsão para negócios decorrentes desta amostra?</li>
                       </ul>
@@ -529,7 +655,7 @@
                       <br />
                       <p>Atenciosamente,</p>
                       <p className="font-bold text-gray-900 mt-4">{emailModalData.atendente}<br/><span className="text-gray-500 font-normal text-sm">Setor de Amostras</span></p>
-                      <div className="mt-6 pt-6 border-t border-gray-200"><img src="https://i.postimg.cc/J0G8jfMQ/as-02-(2).png" alt="Logo Corporativa" style={{ maxHeight: '60px', objectFit: 'contain' }} /></div>
+                      <div className="mt-6 pt-6 border-t border-gray-200"><img src="https://i.postimg.cc/J0G8jfMQ/as-02-(2).png" alt="Logo Doremus" style={{ maxHeight: '60px', objectFit: 'contain' }} /></div>
                     </div>
                   </div>
                 </div>
@@ -546,8 +672,8 @@
                   <p className="text-sm text-slate-600">Tem certeza que deseja excluir o pedido <strong>{orderToDelete.pedido}</strong>? Esta ação não pode ser desfeita.</p>
                 </div>
                 <div className="p-6 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-                  <button onClick={() => setOrderToDelete(null)} className="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-700 bg-white border border-slate-300">Cancelar</button>
-                  <button onClick={() => handleDeleteOrder(orderToDelete.id)} className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-red-600">Sim, Excluir</button>
+                  <button onClick={() => setOrderToDelete(null)} disabled={isLoading} className="px-5 py-2.5 rounded-lg text-sm font-medium text-slate-700 bg-white border border-slate-300">Cancelar</button>
+                  <button onClick={() => handleDeleteOrder(orderToDelete.id)} disabled={isLoading} className="px-5 py-2.5 rounded-lg text-sm font-bold text-white bg-red-600">Sim, Excluir</button>
                 </div>
               </div>
             </div>
