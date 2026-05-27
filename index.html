@@ -37,7 +37,7 @@
     import { createRoot } from 'react-dom/client';
     import { 
       Calendar, Clock, CheckCircle2, AlertCircle, Mail, Search, 
-      X, Send, Building2, Package, UserCircle, Copy, Filter, Layers, Trash2, BellRing, Loader2, RefreshCw, BarChart3, PieChart as PieChartIcon, Menu, ChevronLeft, ExternalLink, Send as SendIcon
+      X, Send, Building2, Package, UserCircle, Copy, Filter, Layers, Trash2, BellRing, Loader2, RefreshCw, BarChart3, PieChart as PieChartIcon, Menu, ChevronLeft, ExternalLink, Send as SendIcon, FileSpreadsheet
     } from 'lucide-react';
     
     import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
@@ -431,6 +431,17 @@
                   <div className="pl-3 text-slate-400"><Search size={16} /></div>
                   <input type="text" placeholder="Buscar pedido, cliente..." className="w-full pl-2 pr-4 py-2.5 text-sm focus:outline-none bg-transparent" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                 </div>
+
+                <a 
+                  href="https://docs.google.com/spreadsheets/d/1kP4XSKwctsU2CPZS_enfj8QRPYTkv3HGuC54ch68mYs/edit?gid=623973450#gid=623973450" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 text-emerald-700 px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm transition-all"
+                  title="Acessar a Planilha Google"
+                >
+                  <FileSpreadsheet size={16} /> Planilha
+                </a>
+
                 <button onClick={() => fetchOrders()} className="bg-white border border-slate-200 hover:border-blue-500 hover:text-blue-600 text-slate-600 p-2.5 rounded-xl shadow-sm transition-all group">
                   <RefreshCw size={18} className={`group-hover:rotate-180 transition-transform duration-500 ${isLoading ? "animate-spin text-blue-500" : ""}`} />
                 </button>
